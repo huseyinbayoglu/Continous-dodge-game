@@ -26,7 +26,7 @@ class DodgeGameEnv(gym.Env):
         
         # Gymnasium action & observation spaces
         self.action_space = Discrete(5)  # 4 yönlü hareket (Up, Down, Left, Right)
-        self.observation_space = Box(0, 1, shape=(2,), dtype=np.float32)
+        self.observation_space = Box(0, 1, shape=(4,), dtype=np.float32)
         """self.observation_space = Dict({
             "agent": Box(0, max(self.width, self.height), shape=(2,), dtype=np.int32),
             "target": Box(0, max(self.width, self.height), shape=(2,), dtype=np.int32),
@@ -91,32 +91,32 @@ class DodgeGameEnv(gym.Env):
         norm_height = self.height
 
         # Ajanın hedefe olan normalize konumu (x farkı, y farkı)
-        agent_target_dx = (self.target_rect.centerx - self.agent_rect.centerx)
-        agent_target_dy = (self.target_rect.centery - self.agent_rect.centery)
+        """agent_target_dx = (self.target_rect.centerx - self.agent_rect.centerx)
+        agent_target_dy = (self.target_rect.centery - self.agent_rect.centery)"""
 
-        """if (self.target_rect.centerx - self.agent_rect.centerx) < 0:
+        if (self.target_rect.centerx - self.agent_rect.centerx) < 0:
             agent_target_dx = -1
         if (self.target_rect.centerx - self.agent_rect.centerx) > 0:
-            agent_target_dx = 1"""
+            agent_target_dx = 1
         if abs((self.target_rect.centerx - self.agent_rect.centerx)) < self.agent_size:
             agent_target_dx = 0
 
-        """if (self.target_rect.centery - self.agent_rect.centery) < 0:
+        if (self.target_rect.centery - self.agent_rect.centery) < 0:
             agent_target_dy = -1
         if (self.target_rect.centery - self.agent_rect.centery) > 0:
-            agent_target_dy = 1"""
+            agent_target_dy = 1
         if abs((self.target_rect.centery - self.agent_rect.centery)) < self.agent_size:
             agent_target_dy = 0
 
-        """if abs((self.target_rect.centerx - self.agent_rect.centerx)) < self.agent_size:
-            agent_target_dx = 0
-
-        if abs((self.target_rect.centery - self.agent_rect.centery)) < self.agent_size:
-            agent_target_dy = 0"""
+        dx = abs(self.target_rect.centerx - self.agent_rect.centerx) / 10
+        dy = abs(self.target_rect.centery - self.agent_rect.centery) / 10
 
         # Normalizee obs
-        agent_target_dx /= self.width
-        agent_target_dy /= self.height
+        """agent_target_dx /= self.width
+        agent_target_dy /= self.height"""
+
+        dx /= (self.width // 10)
+        dy /= (self.height // 10)
 
 
         # Top bilgileri (Ajan-top mesafesi + Topun yönü)
@@ -132,7 +132,7 @@ class DodgeGameEnv(gym.Env):
             balls_data.extend([ball_dx, ball_dy, ball_dir_x, ball_dir_y])
 
         # Gözlem vektörünü oluştur
-        return np.array([agent_target_dx, agent_target_dy] + balls_data, dtype=np.float32)
+        return np.array([agent_target_dx, agent_target_dy]+ [dx,dy] + balls_data, dtype=np.float32)
 
     def step(self, action):
         first_distance = abs(self.target_rect.left - self.agent_rect.left) + abs(self.target_rect.top - self.agent_rect.top)
@@ -206,7 +206,7 @@ register(
     id="DodgeGame-v0",
     entry_point=__name__ + ":DodgeGameEnv",
 )
-
+"""
 if __name__ == "__main__":
     env = DodgeGameEnv(number_of_balls=0, width=500, height=500)
     obs, _ = env.reset()
@@ -239,7 +239,7 @@ if __name__ == "__main__":
     
     env.close()
 
-
+"""
 
 
 """if __name__ == "__main__":
@@ -274,7 +274,7 @@ if __name__ == "__main__":
     print(f"Geçen süre: {elapsed_time:.2f} saniye\nToplam Adım: {total_steps}\nFPS: {fps}")
 """
 
-"""if __name__ == "__main__":
+if __name__ == "__main__":
     env = DodgeGameEnv()
     obs, _ = env.reset()
-    print(obs.shape,obs,env.target_rect,env.agent_rect)"""
+    print(obs.shape,obs,env.target_rect,env.agent_rect)
