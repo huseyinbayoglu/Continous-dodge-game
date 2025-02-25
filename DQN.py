@@ -15,6 +15,8 @@ import matplotlib.pyplot as plt
 # TODO When obs == [0,0] then agent take negative reward action! When achive the target getting
 # farer reward not achived reward!! so its not a good thing to achive the target!!
 
+# TODO Visualize the number of winning game, loosing game, truncated game
+
 class DQN:
     def __init__(self, env_name, train_frequency: int = 4, n_env: int = 4, gamma=0.99, 
                  batch_size=32,epsilon_decay:float = .995, min_epsilon:float = .1,
@@ -71,21 +73,25 @@ class DQN:
         obss = np.array([env.reset()[0] for env in envs]).reshape((self.n_env, self.input_shape)) 
         dones = np.array([False] * self.n_env)
 
+        terminated_game = {
+            "winning_game":0,
+            "loosing_game":0,
+            "truncated_game":0
+        }
         episode_lengths = []
         episode_rewards = []
         
         step_counts = np.zeros(self.n_env)  # Her env için adım sayacı
         total_rewards = np.zeros(self.n_env)  # Her env için ödül sayacı
         total_step_counter = 0
-        for _ in range(n_step): 
+        for __1 in range(1,n_step+1): 
             actions = self.choose_action(obss=obss)
             for idx, env in enumerate(envs):
                 # if the environment is not terminate
                 if not dones[idx]: 
                     # Execute the action
                     next_obs, reward, terminated, _, _ = env.step(actions[idx]) 
-                    self.replay_buffer.append((obss[idx], actions[idx], reward, next_obs, terminated))
-                    
+                    self.replay_buffer.append((np.copy(obss[idx]), actions[idx], reward, np.copy(next_obs), terminated))
                     step_counts[idx] += 1  # Adım sayısını artır
                     total_rewards[idx] += reward  # Ödülü ekle
                     total_step_counter += 1
@@ -95,12 +101,16 @@ class DQN:
                         episode_rewards.append(total_rewards[idx])
                         dones[idx] = True
                         if reward >= 0:
-                            for _ in range(8):
-                                self.replay_buffer.append((obss[idx], actions[idx], reward, next_obs, terminated))
-
+                            terminated_game["winning_game"] += 1
+                            for _ in range(1500):
+                                self.replay_buffer.append((np.copy(obss[idx]), actions[idx], reward, np.copy(next_obs), terminated))
+                        if reward <= 0:
+                            terminated_game["loosing_game"] += 1 
                     # if reward < 0:
                     #     print(f"Negative reward!!! obs:{obss[idx]}, reward:{reward}, action:{actions[idx]}")
                     #     print(f"modelin tahmini:{self.main_model.predict(np.array(obss[idx]).reshape(1,2))}")
+                    if __1 == n_step and not terminated:
+                        terminated_game["truncated_game"] += 1
                     obss[idx] = next_obs
 
 
@@ -110,21 +120,25 @@ class DQN:
         min_episode_length = np.min(np.array(episode_lengths))  if episode_lengths else 0
         max_episode_reward = np.max(np.array(episode_rewards))  if episode_rewards else 0
         min_episode_reward = np.min(np.array(episode_rewards))  if episode_rewards else 0
-        return avg_episode_length, avg_episode_reward, total_step_counter, max_episode_length, min_episode_length,max_episode_reward, min_episode_reward
+        return avg_episode_length, avg_episode_reward, total_step_counter, max_episode_length, min_episode_length,max_episode_reward, min_episode_reward, terminated_game
 
     def train(self):
         """Deneyim havuzundan örnek alıp modeli eğitir"""
         if len(self.replay_buffer) < self.batch_size:
             return
+        
+        # print("TRAİN EDİLECEK")
         minibatch = [self.replay_buffer[np.random.randint(0, len(self.replay_buffer))] for _ in range(self.batch_size)]
-
         states, actions, rewards, next_states, dones = zip(*minibatch)
+        # print(f"Minibatch'ten ilk 1 experience\n{minibatch[:1]}")
         states = np.array(states)
         next_states = np.array(next_states)
 
         # Q-Değerleri hesapla
         q_values = self.main_model.predict(states, verbose=0)
         next_q_values = self.target_model.predict(next_states, verbose=0)
+        # print(f"Minibatch için Q değerleri\n{q_values[:1]}")
+        # print(f"Minibatch için Next_Q değerleri\n{next_q_values[:1]}")
         # Hedef Q-Değerleri
         for i in range(self.batch_size):
             target_q = rewards[i]
@@ -134,7 +148,10 @@ class DQN:
 
             q_values[i][actions[i]] = target_q  # Güncellenmiş hedef Q
         # Modeli eğit
+        
+        # print(f"Minibatch için label değerleri\n{q_values[:1]}")
         history = self.main_model.fit(states, q_values, epochs=1, verbose=1, batch_size=self.batch_size)
+        # print(f"Eğitim sonrası q değer tahminleri \n{self.main_model.predict(np.array(states[:1]).reshape(1,2))}")
         return history.history['loss'][0], history.history["accuracy"][0]
 
     def learn(self, total_steps: int = 1000, plot:bool = False,n_step:int = 50):
@@ -152,19 +169,20 @@ class DQN:
         while step < total_steps:
             st1 = time.time()
             avg_ep_length, avg_ep_reward, adding_total_step, \
-                max_ep_len, min_ep_len, max_ep_reward, min_ep_reward = self.rollout(n_step = n_step)
+                max_ep_len, min_ep_len, max_ep_reward, min_ep_reward,\
+                     terminated_game = self.rollout(n_step = n_step)
             episode_lengths.append(avg_ep_length)
             episode_rewards.append(avg_ep_reward)
             episode_max_lengths.append(max_ep_len)
             episode_min_lengths.append(min_ep_len)
             episode_max_rewards.append(max_ep_reward)
             episode_min_rewards.append(min_ep_reward)
-            if avg_ep_reward > recor_reward:
+            if min_ep_reward > recor_reward:
                 self.save_model("deneme_best2.keras")
             step += 1
             total_frame += adding_total_step
             self.epsilon = max(self.min_epsilon, self.epsilon * self.epsilon_decay)
-            print(f"""Güncel step:{step}\nAverage epsilon length:{avg_ep_length}\nAverage reward:{avg_ep_reward}\nmax episode length:{max_ep_len}\tmin episode length:{min_ep_len}\nmax episode reward:{max_ep_reward}\tmin episode reward{min_ep_reward}\ntotal_frame:{total_frame}\nfps:{round(adding_total_step/(time.time()-st1))}\nepsilon:{self.epsilon}""",end="\n"*4)
+            print(f"""Güncel step:{step}\nAverage episode length:{avg_ep_length}\nAverage reward:{avg_ep_reward}\nmax episode length:{max_ep_len}\tmin episode length:{min_ep_len}\nmax episode reward:{max_ep_reward}\tmin episode reward{min_ep_reward}\ntotal_frame:{total_frame}\nfps:{round(adding_total_step/(time.time()-st1))}\nepsilon:{self.epsilon}\n{terminated_game}""",end="\n"*4)
             if step % self.train_frequency == 0:
                 loss,accuracy = self.train()
                 if loss is not None:
@@ -177,10 +195,10 @@ class DQN:
             # Belirli aralıklarla grafikleri çiz
             if plot:  
                 self.plot_metrics(episode_lengths, episode_rewards, losses, accuracies,episode_max_lengths,
-                                  episode_min_lengths,episode_max_rewards,episode_min_rewards)
+                                  episode_min_lengths,episode_max_rewards,episode_min_rewards,False,terminated_game)
             if step >= total_steps:
                 self.plot_metrics(episode_lengths, episode_rewards, losses, accuracies,episode_max_lengths,
-                                  episode_min_lengths,episode_max_rewards,episode_min_rewards,True)
+                                  episode_min_lengths,episode_max_rewards,episode_min_rewards,True,terminated_game)
             
     def choose_action(self, obss):
         if np.random.random() > self.epsilon:
@@ -198,7 +216,8 @@ class DQN:
         self.main_model = tf.keras.models.load_model(path)
         self._update_target_model()
 
-    def plot_metrics(self, episode_lengths, episode_rewards, losses,accuracies, max_len, min_len, max_rew, min_rew,show=False):
+    def plot_metrics(self, episode_lengths, episode_rewards, losses,accuracies, max_len, 
+                     min_len, max_rew, min_rew,show=False, terminal_game_info:dict = None):
         def moving_average(data, window_size=5):
             if len(data) < window_size:
                 return np.convolve(data, np.ones(len(data)) / len(data), mode='valid')
@@ -315,7 +334,7 @@ if __name__ == "__main__":
     agent = DQN(env_name,n_env=100,train_frequency=1,maxlen=500_000,update_target_frequency=3,
                 batch_size=64,gamma=.98, epsilon_decay=.975,min_epsilon=.001)
     st = time.time()
-    agent.learn(total_steps=80,plot=True,n_step=30)
+    agent.learn(total_steps=50,plot=True,n_step=105)
     print(f"Training time: {time.time()-st}")
     agent.save_model("deneme_son2.keras")
 
