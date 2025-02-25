@@ -4,6 +4,8 @@ from gymnasium.envs.registration import register
 import numpy as np
 import pygame
 
+# TODO observation metodunda centerler arası farkı değilde kenarlar/köşeler arası farka bak
+# x ekseninde hareket y eksenindeki sonucu değiştirmesin
 
 class DodgeGameEnv(gym.Env):
     def __init__(self, width=500, height=500, number_of_balls=0):
@@ -17,9 +19,9 @@ class DodgeGameEnv(gym.Env):
 
         self.rewards = {
             "collision": -6,
-            "closer": .5,
-            "farer":-.6,
-            "achived":2
+            "closer": .3,
+            "farer":-1,
+            "achived":5
         }
         
         # Gymnasium action & observation spaces
@@ -88,26 +90,33 @@ class DodgeGameEnv(gym.Env):
         norm_width = self.width
         norm_height = self.height
 
-        """target_distance_x = self.target_rect.centerx - self.agent_rect.centerx
-        target_distance_x = (target_distance_x // 10) -1 if target_distance_x >0 else (target_distance_x // 10) + 1
-        target_distance_y = self.target_rect.centery - self.agent_rect.centery
-        target_distance_y = (target_distance_y // 10) -1 if target_distance_y >0 else (target_distance_y // 10) + 1
-        target_distance_x /= (self.width // 10)
-        target_distance_y /= (self.height // 10)"""
         # Ajanın hedefe olan normalize konumu (x farkı, y farkı)
-        if (self.target_rect.centerx - self.agent_rect.centerx) < 0:
+        agent_target_dx = (self.target_rect.centerx - self.agent_rect.centerx)
+        agent_target_dy = (self.target_rect.centery - self.agent_rect.centery)
+
+        """if (self.target_rect.centerx - self.agent_rect.centerx) < 0:
             agent_target_dx = -1
         if (self.target_rect.centerx - self.agent_rect.centerx) > 0:
-            agent_target_dx = 1
+            agent_target_dx = 1"""
         if abs((self.target_rect.centerx - self.agent_rect.centerx)) < self.agent_size:
             agent_target_dx = 0
 
-        if (self.target_rect.centery - self.agent_rect.centery) < 0:
+        """if (self.target_rect.centery - self.agent_rect.centery) < 0:
             agent_target_dy = -1
         if (self.target_rect.centery - self.agent_rect.centery) > 0:
-            agent_target_dy = 1
+            agent_target_dy = 1"""
         if abs((self.target_rect.centery - self.agent_rect.centery)) < self.agent_size:
             agent_target_dy = 0
+
+        """if abs((self.target_rect.centerx - self.agent_rect.centerx)) < self.agent_size:
+            agent_target_dx = 0
+
+        if abs((self.target_rect.centery - self.agent_rect.centery)) < self.agent_size:
+            agent_target_dy = 0"""
+
+        # Normalizee obs
+        agent_target_dx /= self.width
+        agent_target_dy /= self.height
 
 
         # Top bilgileri (Ajan-top mesafesi + Topun yönü)
@@ -197,9 +206,9 @@ register(
     id="DodgeGame-v0",
     entry_point=__name__ + ":DodgeGameEnv",
 )
-"""
+
 if __name__ == "__main__":
-    env = DodgeGameEnv(number_of_balls=13, width=500, height=500)
+    env = DodgeGameEnv(number_of_balls=0, width=500, height=500)
     obs, _ = env.reset()
     done = False
     over = False
@@ -219,19 +228,18 @@ if __name__ == "__main__":
                 elif event.key == pygame.K_d:
                     action = 1  # Sağ
                 
+                print(f"hamle öncesi observation: {env._get_obs()}")
                 obs, reward, done, _, _ = env.step(action)
-                obs_dict = {
-                    "relative_target_position": obs[:2].tolist(),
-                    "relative_ball_positions": obs[2:].tolist()
-                }
-                print(obs_dict)
+                print(f"hamle sonrası observation:{obs}")
                 env.render()
                 if done:
                     obs, _ = env.reset()
+                pygame.time.delay(1500)
+                    
     
     env.close()
 
-"""
+
 
 
 """if __name__ == "__main__":
@@ -266,7 +274,7 @@ if __name__ == "__main__":
     print(f"Geçen süre: {elapsed_time:.2f} saniye\nToplam Adım: {total_steps}\nFPS: {fps}")
 """
 
-if __name__ == "__main__":
+"""if __name__ == "__main__":
     env = DodgeGameEnv()
     obs, _ = env.reset()
-    print(obs.shape)
+    print(obs.shape,obs,env.target_rect,env.agent_rect)"""
