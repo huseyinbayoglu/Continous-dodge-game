@@ -106,6 +106,9 @@ class DQN:
                                 self.replay_buffer.append((np.copy(obss[idx]), actions[idx], reward, np.copy(next_obs), terminated))
                         if reward <= 0:
                             terminated_game["loosing_game"] += 1 
+                            # for _ in range(50):
+                            #     self.replay_buffer.append((np.copy(obss[idx]), actions[idx], reward, np.copy(next_obs), terminated))
+
                     # if reward < 0:
                     #     print(f"Negative reward!!! obs:{obss[idx]}, reward:{reward}, action:{actions[idx]}")
                     #     print(f"modelin tahmini:{self.main_model.predict(np.array(obss[idx]).reshape(1,2))}")
@@ -122,10 +125,17 @@ class DQN:
         min_episode_reward = np.min(np.array(episode_rewards))  if episode_rewards else 0
         return avg_episode_length, avg_episode_reward, total_step_counter, max_episode_length, min_episode_length,max_episode_reward, min_episode_reward, terminated_game
 
-    def train(self):
+    def train(self, step):
         """Deneyim havuzundan örnek alıp modeli eğitir"""
         if len(self.replay_buffer) < self.batch_size:
             return
+        
+        # Öğrenme oranını güncelle
+        if 250 <= step:
+            tf.keras.backend.set_value(self.main_model.optimizer.lr, 0.001)  # Yeni öğrenme oranı
+        else:
+            tf.keras.backend.set_value(self.main_model.optimizer.lr, 0.01)  # Varsayılan öğrenme oranı
+
         
         # print("TRAİN EDİLECEK")
         minibatch = [self.replay_buffer[np.random.randint(0, len(self.replay_buffer))] for _ in range(self.batch_size)]
@@ -163,6 +173,9 @@ class DQN:
         episode_min_lengths = []
         episode_max_rewards = []
         episode_min_rewards = []
+        winning_game = []
+        loosing_game = []
+        truncated_game = []
         losses = []  # Model kayıplarını sakla
         accuracies = []  
         recor_reward = - np.inf
@@ -177,14 +190,21 @@ class DQN:
             episode_min_lengths.append(min_ep_len)
             episode_max_rewards.append(max_ep_reward)
             episode_min_rewards.append(min_ep_reward)
-            if min_ep_reward > recor_reward:
-                self.save_model("deneme_best2.keras")
+            winning_game.append(terminated_game["winning_game"])
+            loosing_game.append(terminated_game["loosing_game"])
+            truncated_game.append(terminated_game["truncated_game"])
+            if terminated_game["loosing_game"] != 0:
+                if terminated_game["winning_game"]/terminated_game["loosing_game"] > recor_reward:
+                    self.save_model("deneme_best2.keras")
+            else:
+                if terminated_game["winning_game"]/(terminated_game["loosing_game"]+.1) > recor_reward:
+                    self.save_model("deneme_best2.keras")
             step += 1
             total_frame += adding_total_step
             self.epsilon = max(self.min_epsilon, self.epsilon * self.epsilon_decay)
             print(f"""Güncel step:{step}\nAverage episode length:{avg_ep_length}\nAverage reward:{avg_ep_reward}\nmax episode length:{max_ep_len}\tmin episode length:{min_ep_len}\nmax episode reward:{max_ep_reward}\tmin episode reward{min_ep_reward}\ntotal_frame:{total_frame}\nfps:{round(adding_total_step/(time.time()-st1))}\nepsilon:{self.epsilon}\n{terminated_game}""",end="\n"*4)
             if step % self.train_frequency == 0:
-                loss,accuracy = self.train()
+                loss, accuracy = self.train(step)
                 if loss is not None:
                     losses.append(loss)
                 if accuracy is not None:
@@ -195,10 +215,14 @@ class DQN:
             # Belirli aralıklarla grafikleri çiz
             if plot:  
                 self.plot_metrics(episode_lengths, episode_rewards, losses, accuracies,episode_max_lengths,
-                                  episode_min_lengths,episode_max_rewards,episode_min_rewards,False,terminated_game)
+                                  episode_min_lengths,episode_max_rewards,episode_min_rewards,False,
+                                  winning_game = winning_game,loosing_game = loosing_game,
+                                  truncated_game = truncated_game)
             if step >= total_steps:
                 self.plot_metrics(episode_lengths, episode_rewards, losses, accuracies,episode_max_lengths,
-                                  episode_min_lengths,episode_max_rewards,episode_min_rewards,True,terminated_game)
+                                  episode_min_lengths,episode_max_rewards,episode_min_rewards,True,
+                                  winning_game = winning_game,loosing_game = loosing_game,
+                                  truncated_game = truncated_game)
             
     def choose_action(self, obss):
         if np.random.random() > self.epsilon:
@@ -217,7 +241,7 @@ class DQN:
         self._update_target_model()
 
     def plot_metrics(self, episode_lengths, episode_rewards, losses,accuracies, max_len, 
-                     min_len, max_rew, min_rew,show=False, terminal_game_info:dict = None):
+                     min_len, max_rew, min_rew,show=False,winning_game = [],loosing_game = [],truncated_game = None):
         def moving_average(data, window_size=5):
             if len(data) < window_size:
                 return np.convolve(data, np.ones(len(data)) / len(data), mode='valid')
@@ -225,7 +249,7 @@ class DQN:
 
         if not hasattr(self, 'fig'):
             # İlk kez çalışıyorsa figür ve çizgileri oluştur
-            self.fig, self.axs = plt.subplots(2, 2, figsize=(15, 6))
+            self.fig, self.axs = plt.subplots(2, 3, figsize=(18, 6))
 
             # Kayıp grafiği (Loss)
             self.loss_line, = self.axs[0, 0].plot([], [], label="Loss", color='r')
@@ -259,6 +283,14 @@ class DQN:
             self.axs[1, 1].set_title("Average Episode Reward")
             self.axs[1, 1].legend()
 
+            self.win_line, = self.axs[0, 2].plot([], [], label="Winning Games", color='green')
+            self.lose_line, = self.axs[0, 2].plot([], [], label="Losing Games", color='red')
+            self.trunc_line, = self.axs[0, 2].plot([], [], label="Truncated Games", color='orange')
+            self.axs[0, 2].set_xlabel("Training Steps")
+            self.axs[0, 2].set_ylabel("Game Count")
+            self.axs[0, 2].set_title("Terminated Games")
+            self.axs[0, 2].legend()
+
             plt.ion()  # Interactive mode
             plt.show()
 
@@ -288,11 +320,19 @@ class DQN:
         
 
         # X eksenini pencere boyutundan başlayarak güncelle
-        self.length_avg_line.set_xdata(x_data[window_size - 1 : len(ma_lengths) + window_size - 1])
+        """self.length_avg_line.set_xdata(x_data[window_size - 1 : len(ma_lengths) + window_size - 1])
         self.length_avg_line.set_ydata(ma_lengths)
 
         self.reward_avg_line.set_xdata(x_data[window_size - 1 : len(ma_rewards) + window_size - 1])
-        self.reward_avg_line.set_ydata(ma_rewards)
+        self.reward_avg_line.set_ydata(ma_rewards)"""
+
+        # Winning, losing ve truncated oyunları güncelle
+        self.win_line.set_xdata(x_data[:len(winning_game)])
+        self.win_line.set_ydata(winning_game)
+        self.lose_line.set_xdata(x_data[:len(loosing_game)])
+        self.lose_line.set_ydata(loosing_game)
+        self.trunc_line.set_xdata(x_data[:len(truncated_game)])
+        self.trunc_line.set_ydata(truncated_game)
 
         # fill_between için öncekini temizle ve yeniden çiz
         for coll in self.axs[1, 0].collections:
@@ -332,9 +372,11 @@ if __name__ == "__main__":
     import time 
     env_name = "DodgeGame-v0"  # Kendi ortamının adını buraya gir
     agent = DQN(env_name,n_env=100,train_frequency=1,maxlen=500_000,update_target_frequency=3,
-                batch_size=64,gamma=.98, epsilon_decay=.975,min_epsilon=.001)
+                batch_size=64,gamma=.98, epsilon_decay=.995,min_epsilon=.002)
+    """agent.load_model("deneme_son2.keras")
+    agent.epsilon = 0.22"""
     st = time.time()
-    agent.learn(total_steps=50,plot=True,n_step=105)
+    agent.learn(total_steps=300,plot=True,n_step=70)
     print(f"Training time: {time.time()-st}")
     agent.save_model("deneme_son2.keras")
 
