@@ -8,7 +8,7 @@ import pygame
 # x ekseninde hareket y eksenindeki sonucu değiştirmesin
 
 class DodgeGameEnv(gym.Env):
-    def __init__(self, width=500, height=500, number_of_balls=0):
+    def __init__(self, width=500, height=500, number_of_balls=13):
         super().__init__()
         
         self.width = width
@@ -18,20 +18,16 @@ class DodgeGameEnv(gym.Env):
         self.ball_size = 20  # Kare topların boyutu
 
         self.rewards = {
-            "collision": -6,
-            "closer": .3,
-            "farer":-1,
-            "achived":5
+            "collision": -15,
+            "closer": .2,
+            "farer":-.3,
+            "achived":14
         }
         
         # Gymnasium action & observation spaces
         self.action_space = Discrete(5)  # 4 yönlü hareket (Up, Down, Left, Right)
-        self.observation_space = Box(0, 1, shape=(4,), dtype=np.float32)
-        """self.observation_space = Dict({
-            "agent": Box(0, max(self.width, self.height), shape=(2,), dtype=np.int32),
-            "target": Box(0, max(self.width, self.height), shape=(2,), dtype=np.int32),
-            "balls": Box(0, max(self.width, self.height), shape=(number_of_balls, 2), dtype=np.int32),
-        })"""
+        self.observation_space = Box(0, 1, shape=(82,), dtype=np.float32)
+        
         
         # Hareket yönleri
         self._action_to_direction = {
@@ -84,55 +80,63 @@ class DodgeGameEnv(gym.Env):
         self.ball_directions = self.np_random.choice([-1, 1], size=(self.number_of_balls, 2)) * 5  # -5 veya 5 hız
         
         return self._get_obs(), {}
-    
+
     def _get_obs(self):
-        # Normalize değerler için genişlik ve yükseklik
-        norm_width = self.width
-        norm_height = self.height
+        def get_direction_and_distance(x1, y1, x2, y2, norm_factor_x, norm_factor_y, agent_size):
+            """Hedef veya top için yön (-1, 0, 1) ve normalize mesafe hesaplar."""
+            dx = x2 - x1
+            dy = y2 - y1
+            
+            # Yön hesaplama
+            direction_x = -1 if dx < 0 else (1 if dx > 0 else 0)
+            direction_y = -1 if dy < 0 else (1 if dy > 0 else 0)
 
-        # Ajanın hedefe olan normalize konumu (x farkı, y farkı)
-        """agent_target_dx = (self.target_rect.centerx - self.agent_rect.centerx)
-        agent_target_dy = (self.target_rect.centery - self.agent_rect.centery)"""
+            # Eğer ajan hedefe/topa yeterince yakınsa, yön sıfırlanır
+            if abs(dx) < agent_size:
+                direction_x = 0
+            if abs(dy) < agent_size:
+                direction_y = 0
 
-        if (self.target_rect.centerx - self.agent_rect.centerx) < 0:
-            agent_target_dx = -1
-        if (self.target_rect.centerx - self.agent_rect.centerx) > 0:
-            agent_target_dx = 1
-        if abs((self.target_rect.centerx - self.agent_rect.centerx)) < self.agent_size:
-            agent_target_dx = 0
+            # Normalize mesafe hesaplama
+            norm_dx = abs(dx) / 10
+            norm_dy = abs(dy) / 10
 
-        if (self.target_rect.centery - self.agent_rect.centery) < 0:
-            agent_target_dy = -1
-        if (self.target_rect.centery - self.agent_rect.centery) > 0:
-            agent_target_dy = 1
-        if abs((self.target_rect.centery - self.agent_rect.centery)) < self.agent_size:
-            agent_target_dy = 0
-
-        dx = abs(self.target_rect.centerx - self.agent_rect.centerx) / 10
-        dy = abs(self.target_rect.centery - self.agent_rect.centery) / 10
-
-        # Normalizee obs
-        """agent_target_dx /= self.width
-        agent_target_dy /= self.height"""
-
-        dx /= (self.width // 10)
-        dy /= (self.height // 10)
+            norm_dx /= norm_factor_x
+            norm_dy /= norm_factor_y
+            return direction_x, direction_y, norm_dx, norm_dy
 
 
-        # Top bilgileri (Ajan-top mesafesi + Topun yönü)
+        norm_width = self.width // 10
+        norm_height = self.height // 10
+
+        # Ajan ve hedef arasındaki yön ve mesafe
+        agent_target_dx, agent_target_dy, norm_dx, norm_dy = get_direction_and_distance(
+            self.agent_rect.centerx, self.agent_rect.centery,
+            self.target_rect.centerx, self.target_rect.centery,
+            norm_width, norm_height, self.agent_size
+        )
+
+        # Top bilgileri
         balls_data = []
-        for i, ball in enumerate(self.ball_rects):
-            ball_dx = (ball.centerx - self.agent_rect.centerx) / norm_width
-            ball_dy = (ball.centery - self.agent_rect.centery) / norm_height
+        for i,ball in enumerate(self.ball_rects):
+            agent_ball_dx, agent_ball_dy, norm_dx_ball, norm_dy_ball = get_direction_and_distance(
+                self.agent_rect.centerx, self.agent_rect.centery,
+                ball.centerx, ball.centery,
+                norm_width, norm_height, self.agent_size
+            )
+            # Topun hız yönü (velocity_x, velocity_y)
+            velocity_x, velocity_y = self.ball_directions[i]  # Topların hız vektörleri
+            velocity_x /= 5
+            velocity_y /= 5
 
-            # Top yönleri (-1 veya 1 olarak)
-            ball_dir_x = self.ball_directions[i][0] / abs(self.ball_directions[i][0])
-            ball_dir_y = self.ball_directions[i][1] / abs(self.ball_directions[i][1])
+            # Tüm bilgileri ekleyelim
+            balls_data.append([agent_ball_dx, agent_ball_dy, norm_dx_ball, norm_dy_ball, velocity_x, velocity_y])
 
-            balls_data.extend([ball_dx, ball_dy, ball_dir_x, ball_dir_y])
 
-        # Gözlem vektörünü oluştur
-        return np.array([agent_target_dx, agent_target_dy]+ [dx,dy] + balls_data, dtype=np.float32)
+        # Gözlem vektörü oluşturma
+        balls_data = np.array(balls_data).flatten()
+        state = np.concatenate([[agent_target_dx, agent_target_dy, norm_dx, norm_dy], balls_data])
+        return state
 
     def step(self, action):
         first_distance = abs(self.target_rect.left - self.agent_rect.left) + abs(self.target_rect.top - self.agent_rect.top)
@@ -157,7 +161,6 @@ class DodgeGameEnv(gym.Env):
         terminated = False
         truncated = False  # Zaman sınırı varsa True yapılabilir
         reward = self.rewards["closer"] if second_distance < first_distance else self.rewards["farer"]
-
 
         if self.agent_rect.colliderect(self.target_rect):
             reward = self.rewards["achived"]
@@ -277,4 +280,4 @@ if __name__ == "__main__":
 if __name__ == "__main__":
     env = DodgeGameEnv()
     obs, _ = env.reset()
-    print(obs.shape,obs,env.target_rect,env.agent_rect)
+    print(obs.shape,"\n",obs,"\n",env.target_rect,env.agent_rect)
