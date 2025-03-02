@@ -1,13 +1,16 @@
+import pandas as pd
 import numpy as np 
 import tensorflow as tf 
 from tensorflow.keras.models import Sequential
 from tensorflow.keras.layers import Dense, Input
+from dodge_game_env import DodgeGameEnv
 from collections import deque
 import gymnasium as gym 
-import dodge_game_env
 import matplotlib.pyplot as plt 
+import os 
 
-# TODO results might be wrong. The agent plays perfectly but the result rewards not good.
+
+# TODO results might be wrong. The agent plays perfectly but the result rewards not good.Fix it ✅ 
 
 # TODO Make a wrapper to record game. And turn it to an mp4 file or save env state,and actions
 # then replay it to get actual results
@@ -15,7 +18,14 @@ import matplotlib.pyplot as plt
 # TODO When obs == [0,0] then agent take negative reward action! When achive the target getting
 # farer reward not achived reward!! so its not a good thing to achive the target!!
 
-# TODO Visualize the number of winning game, loosing game, truncated game
+# TODO Visualize the number of winning game, loosing game, truncated game ✅
+
+# TODO Make a function that analysis the replay buffer. ✅
+
+# TODO Visualize the result of analyzing replay buffer ✅
+
+# TODO Deploy the project using a cloud service when its done.
+
 
 class DQN:
     def __init__(self, env_name, train_frequency: int = 4, n_env: int = 4, gamma=0.99, 
@@ -44,16 +54,17 @@ class DQN:
         self.maxlen = maxlen
         self.replay_buffer = deque(maxlen=self.maxlen)  # Deneyim havuzu
 
+        self.max_ep_reward = np.inf
+
     def _get_model(self):
         """DQN Modeli"""
         model = Sequential([
             Input(shape=(self.input_shape,)),  
-            # Dense(128, activation="relu"),  
             Dense(32, activation="relu"), 
             Dense(32, activation="relu"), 
             Dense(self.output_shape, activation="linear")  
         ])
-        model.compile(optimizer=tf.keras.optimizers.legacy.Adam(learning_rate=0.01),
+        model.compile(optimizer=tf.keras.optimizers.legacy.Adam(learning_rate=0.001),
                       loss="mse", metrics=["accuracy"])
         return model
 
@@ -102,12 +113,12 @@ class DQN:
                         dones[idx] = True
                         if reward >= 0:
                             terminated_game["winning_game"] += 1
-                            for _ in range(1500):
-                                self.replay_buffer.append((np.copy(obss[idx]), actions[idx], reward, np.copy(next_obs), terminated))
+                            # for _ in range(700):
+                                # self.replay_buffer.append((np.copy(obss[idx]), actions[idx], reward, np.copy(next_obs), terminated))
                         if reward <= 0:
                             terminated_game["loosing_game"] += 1 
-                            # for _ in range(50):
-                            #     self.replay_buffer.append((np.copy(obss[idx]), actions[idx], reward, np.copy(next_obs), terminated))
+                            # for _ in range(30):
+                                #  self.replay_buffer.append((np.copy(obss[idx]), actions[idx], reward, np.copy(next_obs), terminated))
 
                     # if reward < 0:
                     #     print(f"Negative reward!!! obs:{obss[idx]}, reward:{reward}, action:{actions[idx]}")
@@ -132,14 +143,21 @@ class DQN:
         
         # Öğrenme oranını güncelle
         if 250 <= step:
-            tf.keras.backend.set_value(self.main_model.optimizer.lr, 0.001)  # Yeni öğrenme oranı
+            tf.keras.backend.set_value(self.main_model.optimizer.lr, 0.003)  # Yeni öğrenme oranı
+        elif 1000 <= step:
+            tf.keras.backend.set_value(self.main_model.optimizer.lr, 0.001) 
         else:
             tf.keras.backend.set_value(self.main_model.optimizer.lr, 0.01)  # Varsayılan öğrenme oranı
-
         
         # print("TRAİN EDİLECEK")
         minibatch = [self.replay_buffer[np.random.randint(0, len(self.replay_buffer))] for _ in range(self.batch_size)]
         states, actions, rewards, next_states, dones = zip(*minibatch)
+        counter_reward = 0
+        for k in rewards:
+            if k == 5:
+                counter_reward += 1
+        print(f"Bu stepte minibatchte kazanılan oyun durumu sayısı:{counter_reward}")
+
         # print(f"Minibatch'ten ilk 1 experience\n{minibatch[:1]}")
         states = np.array(states)
         next_states = np.array(next_states)
@@ -176,6 +194,10 @@ class DQN:
         winning_game = []
         loosing_game = []
         truncated_game = []
+        winning_frames = []
+        closer_frames = []
+        farer_frames = []
+        loosing_frames = []
         losses = []  # Model kayıplarını sakla
         accuracies = []  
         recor_reward = - np.inf
@@ -193,6 +215,11 @@ class DQN:
             winning_game.append(terminated_game["winning_game"])
             loosing_game.append(terminated_game["loosing_game"])
             truncated_game.append(terminated_game["truncated_game"])
+            replay_buffer_analysis = self.analyze_replay_buffer()
+            winning_frames.append(replay_buffer_analysis["winning_state"])
+            closer_frames.append(replay_buffer_analysis["closer_state"])
+            farer_frames.append(replay_buffer_analysis["farer_state"])
+            loosing_frames.append(replay_buffer_analysis["collision_state"])
             if terminated_game["loosing_game"] != 0:
                 if terminated_game["winning_game"]/terminated_game["loosing_game"] > recor_reward:
                     self.save_model("deneme_best2.keras")
@@ -202,7 +229,7 @@ class DQN:
             step += 1
             total_frame += adding_total_step
             self.epsilon = max(self.min_epsilon, self.epsilon * self.epsilon_decay)
-            print(f"""Güncel step:{step}\nAverage episode length:{avg_ep_length}\nAverage reward:{avg_ep_reward}\nmax episode length:{max_ep_len}\tmin episode length:{min_ep_len}\nmax episode reward:{max_ep_reward}\tmin episode reward{min_ep_reward}\ntotal_frame:{total_frame}\nfps:{round(adding_total_step/(time.time()-st1))}\nepsilon:{self.epsilon}\n{terminated_game}""",end="\n"*4)
+            print(f"""Güncel step:{step}\nAverage episode length:{avg_ep_length}\nAverage reward:{avg_ep_reward}\nmax episode length:{max_ep_len}\tmin episode length:{min_ep_len}\nmax episode reward:{max_ep_reward}\tmin episode reward{min_ep_reward}\ntotal_frame:{total_frame}\nfps:{round(adding_total_step/(time.time()-st1))}\nepsilon:{self.epsilon}\n{terminated_game}\n Replay buffer results:{replay_buffer_analysis}""",end="\n"*4)
             if step % self.train_frequency == 0:
                 loss, accuracy = self.train(step)
                 if loss is not None:
@@ -212,17 +239,21 @@ class DQN:
 
             if step % self._update_target_frequency == 0:
                 self._update_target_model()
+            
+            
             # Belirli aralıklarla grafikleri çiz
             if plot:  
                 self.plot_metrics(episode_lengths, episode_rewards, losses, accuracies,episode_max_lengths,
                                   episode_min_lengths,episode_max_rewards,episode_min_rewards,False,
                                   winning_game = winning_game,loosing_game = loosing_game,
-                                  truncated_game = truncated_game)
+                                  truncated_game = truncated_game,winning_frame=winning_frames,
+                                  closer_frame=closer_frames, farer_frame=farer_frames, loosing_frame = loosing_frames)
             if step >= total_steps:
                 self.plot_metrics(episode_lengths, episode_rewards, losses, accuracies,episode_max_lengths,
                                   episode_min_lengths,episode_max_rewards,episode_min_rewards,True,
                                   winning_game = winning_game,loosing_game = loosing_game,
-                                  truncated_game = truncated_game)
+                                  truncated_game = truncated_game,winning_frame=winning_frames,
+                                  closer_frame=closer_frames, farer_frame=farer_frames, loosing_frame = loosing_frames)
             
     def choose_action(self, obss):
         if np.random.random() > self.epsilon:
@@ -233,15 +264,27 @@ class DQN:
         
         return np.array(actions).reshape((self.n_env, 1))
     
-    def save_model(self, path: str):
+    def save_model(self, filename: str):
+        folder = "models"
+        if not os.path.exists(folder):
+            os.makedirs(folder)
+        path = os.path.join(folder, filename)
         self.main_model.save(path)
-
-    def load_model(self, path: str):
-        self.main_model = tf.keras.models.load_model(path)
-        self._update_target_model()
+        # print(f"Model saved at {path}")
+    
+    def load_model(self, filename: str):
+        path = os.path.join("models", filename)
+        if os.path.exists(path):
+            self.main_model = tf.keras.models.load_model(path)
+            self._update_target_model()
+            # print(f"Model loaded from {path}")
+        else:
+            print("Error: Model file does not exist.")
 
     def plot_metrics(self, episode_lengths, episode_rewards, losses,accuracies, max_len, 
-                     min_len, max_rew, min_rew,show=False,winning_game = [],loosing_game = [],truncated_game = None):
+                     min_len, max_rew, min_rew,show=False,winning_game = [],loosing_game = [],
+                     truncated_game = [], winning_frame = [], closer_frame = [], 
+                     farer_frame = [], loosing_frame = []):
         def moving_average(data, window_size=5):
             if len(data) < window_size:
                 return np.convolve(data, np.ones(len(data)) / len(data), mode='valid')
@@ -291,6 +334,16 @@ class DQN:
             self.axs[0, 2].set_title("Terminated Games")
             self.axs[0, 2].legend()
 
+            # self.wining_frame_line, = self.axs[1, 2].plot([], [], label="Winning state frame", color='green')
+            self.closer_frame_line, = self.axs[1, 2].plot([], [], label="Closer state number", color='blue')
+            self.farer_frame_line, = self.axs[1, 2].plot([], [], label="farer state number", color='orange')
+            # self.loosing_frame_line, = self.axs[1, 2].plot([], [], label="loosing state number", color='red')
+            self.axs[1, 2].set_xlabel("Training Steps")
+            self.axs[1, 2].set_ylabel("Frame Count")
+            self.axs[1, 2].set_title("Replay Buffer")
+            self.axs[1, 2].legend()
+
+
             plt.ion()  # Interactive mode
             plt.show()
 
@@ -334,6 +387,19 @@ class DQN:
         self.trunc_line.set_xdata(x_data[:len(truncated_game)])
         self.trunc_line.set_ydata(truncated_game)
 
+        # Frame sayılarını günceller
+        """self.wining_frame_line.set_xdata(x_data[:len(winning_frame)])
+        self.wining_frame_line.set_ydata(winning_frame)"""
+
+        self.closer_frame_line.set_xdata(x_data[:len(closer_frame)])
+        self.closer_frame_line.set_ydata(closer_frame)
+
+        self.farer_frame_line.set_xdata(x_data[:len(farer_frame)])
+        self.farer_frame_line.set_ydata(farer_frame)
+
+        """self.loosing_frame_line.set_xdata(x_data[:len(loosing_frame)])
+        self.loosing_frame_line.set_ydata(loosing_frame)"""
+
         # fill_between için öncekini temizle ve yeniden çiz
         for coll in self.axs[1, 0].collections:
             coll.remove()
@@ -366,18 +432,32 @@ class DQN:
         if show:
             plt.savefig("Results.png")
 
+    def analyze_replay_buffer(self):
+        rewards = np.fromiter((r for _,_,r,_,_ in self.replay_buffer),dtype=np.float32)
+        count_of_winning_states = np.count_nonzero(rewards == 5)
+        count_of_closer_states = np.count_nonzero(rewards == .4)
+        count_of_farer_states = np.count_nonzero(rewards == -.7)
+        count_of_collision_states = np.count_nonzero(rewards == -5)
+        return {
+            "winning_state":count_of_winning_states,
+            "closer_state":count_of_closer_states,
+            "farer_state":count_of_farer_states,
+            "collision_state":count_of_collision_states,
+            "Size": len(self.replay_buffer)
+        }
 
     
 if __name__ == "__main__":
     import time 
     env_name = "DodgeGame-v0"  # Kendi ortamının adını buraya gir
     agent = DQN(env_name,n_env=100,train_frequency=1,maxlen=500_000,update_target_frequency=3,
-                batch_size=64,gamma=.98, epsilon_decay=.995,min_epsilon=.002)
-    """agent.load_model("deneme_son2.keras")
-    agent.epsilon = 0.22"""
+                batch_size=128,gamma=.99, epsilon_decay=.955,min_epsilon=.007)
+    """agent.load_model("deneme_best2.keras")
+    agent.epsilon = 0.1"""
     st = time.time()
-    agent.learn(total_steps=300,plot=True,n_step=70)
+    agent.learn(total_steps=600,plot=True,n_step=90)
     print(f"Training time: {time.time()-st}")
     agent.save_model("deneme_son2.keras")
+
 
 
