@@ -3,57 +3,51 @@ from DQN import DQN
 import numpy as np
 import dodge_game_env  # DodgeGameEnv'nin doğru olduğundan emin ol
 import pygame
-
+import tensorflow as tf 
+import os 
+from tqdm import tqdm
 # TODO Make a test function to test multiple environment and visualize the results
 
+# TODO Make a script that can get the q values for special game state for example 
+# Q values for being left of the target. or top of the ball going up
 
 
-env_name = "DodgeGame-v0"  # Kendi ortamının adını buraya gir
-agent = DQN(env_name,n_env=500,train_frequency=5,maxlen=100_000,update_target_frequency=30,
-            batch_size=64,gamma=.95, epsilon_decay=.995)
-agent.load_model("deneme_son2.keras")
-print(agent.main_model.summary())
-env = gym.make(env_name)
+def general_test(model_path:str,n_env:int,step:int,env_name:str):
+    result = {"Win_Games":0,"Loosing_Games":0,"Truncated_Games":0}
+    path = os.path.join("models", model_path)
+    if os.path.exists(path):
+        model = tf.keras.models.load_model(path)
+    else:
+        print(f"model cannot be found")
+    
+    envs = [gym.make(env_name) for _ in range(n_env)]
+    obss = [env.reset()[0] for env in envs]
+    dones = np.array([False]*len(envs))
 
-game = 100
-for _ in range(game):
-    obs, info = env.reset()
-    terminated = False
-    truncated = False
-    total_reward = 0
-    while not terminated and not truncated:
-        action = agent.main_model.predict(obs.reshape(1, env.observation_space.shape[0]), verbose=0)
-        dict1 = {
-            "Left":action[0][0],
-            "Right":action[0][1],
-            "Up":action[0][2],
-            "Down":action[0][3],
-            "nothing":action[0][4]
-        }
-        # print(f"state:\nHedefe uzaklık X:{obs[0]}\t Hedefe uzaklık Y:{obs[1]}\nTopa uzaklık X:{obs[2]}\tTopa uzaklık Y:{obs[3]}\nTopun X yönü:{obs[4]}\t Topun Y yönü:{obs[5]}")
-        
-        """print(f"observation:{obs}action:{dict1}\t choosen action:{np.argmax(action)}")
-        waiting = True
-        while waiting:
-            for event in pygame.event.get():
-                if event.type == pygame.QUIT:  # Pencere kapatılırsa çık
-                    waiting = False
-                if event.type == pygame.KEYDOWN:  # Bir tuşa basıldığında
-                    if event.key == pygame.K_SPACE:  # Eğer SPACE tuşuna basıldıysa
-                        waiting = False
-"""
+    for __1 in tqdm(range(1,step+1)):
+        actions = model.predict(np.array(obss).reshape(len(obss),-1), verbose = False)
+        actions = np.argmax(actions, axis=1)
 
-        action = np.argmax(action)
-        #pygame.time.delay(8000)
-        obs, reward, terminated, truncated, info = env.step(action)
-        if reward < 0:
-            print(f"- reward var. obs:{obs}")
-        total_reward += reward
-        # print(f"Action uygulandı alınan reward:{reward}\ttoplam reward:{total_reward}, next obs:{obs}",end="\n"*3) 
-        
-        env.render()  
+        # Execute the action in every environment
+        for idx,env in enumerate(envs):
+            if not dones[idx]:
+                next_obs, reward, terminated, _, _ = env.step(actions[idx]) 
+                if terminated:
+                    dones[idx] = True 
+                    if reward > 0:
+                        result["Win_Games"] += 1
+                        env.close()
+                    if reward < 0:
+                        result["Loosing_Games"] += 1
+                        env.close()
+                if __1 == step and not terminated:
+                    result["Truncated_Games"] += 1
+                obss[idx] = next_obs
+    return result 
 
 
+print(general_test("deneme_son2.keras",500,200,"DodgeGame-v0"))
+print(general_test("deneme_best2.keras",500,200,"DodgeGame-v0"))
+    
 
 
-env.close()
