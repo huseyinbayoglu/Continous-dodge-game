@@ -1,11 +1,15 @@
 import gymnasium as gym
-from gymnasium.spaces import Dict, Box, Discrete
+from gymnasium.spaces import Box, Discrete
 from gymnasium.envs.registration import register
 import numpy as np
 import pygame
+import pickle
+import os 
 
-# TODO observation metodunda centerler arası farkı değilde kenarlar/köşeler arası farka bak
-# x ekseninde hareket y eksenindeki sonucu değiştirmesin
+# TODO get obs metodunda kategorize verileri onehot encoding ile ver✅
+
+# TODO make a function that save the entire env state and make another function (_set state) that
+# load the saved state ✅
 
 class DodgeGameEnv(gym.Env):
     def __init__(self, width=500, height=500, number_of_balls=13):
@@ -18,15 +22,15 @@ class DodgeGameEnv(gym.Env):
         self.ball_size = 20  # Kare topların boyutu
 
         self.rewards = {
-            "collision": -15,
-            "closer": .2,
-            "farer":-.3,
-            "achived":14
+            "collision": -5,
+            "closer": .4,
+            "farer":-.7,
+            "achived":5
         }
         
         # Gymnasium action & observation spaces
         self.action_space = Discrete(5)  # 4 yönlü hareket (Up, Down, Left, Right)
-        self.observation_space = Box(0, 1, shape=(82,), dtype=np.float32)
+        self.observation_space = Box(0, 1, shape=(334,), dtype=np.float32)
         
         
         # Hareket yönleri
@@ -98,12 +102,28 @@ class DodgeGameEnv(gym.Env):
                 direction_y = 0
 
             # Normalize mesafe hesaplama
-            norm_dx = abs(dx) / 10
-            norm_dy = abs(dy) / 10
+            norm_dx = abs(dx) // 10  # number of step
+            norm_dy = abs(dy) // 10  # number of step
 
-            norm_dx /= norm_factor_x
-            norm_dy /= norm_factor_y
-            return direction_x, direction_y, norm_dx, norm_dy
+            distance_encoding_x = [0]*10
+            distance_encoding_y = [0]*10
+
+            if 0<norm_dx < 9:
+                distance_encoding_x[norm_dx] = 1
+            elif norm_dx == 0:
+                distance_encoding_x = [0]*10
+            else:
+                distance_encoding_x[9] = 1  # The last index
+            
+            if 0<norm_dy < 9:
+                distance_encoding_y[norm_dy] = 1
+            elif norm_dy == 0:
+                distance_encoding_y = [0]*10
+            else:
+                distance_encoding_y[9] = 1  # The last index
+            
+
+            return direction_x, direction_y, distance_encoding_x, distance_encoding_y
 
 
         norm_width = self.width // 10
@@ -119,7 +139,7 @@ class DodgeGameEnv(gym.Env):
         # Top bilgileri
         balls_data = []
         for i,ball in enumerate(self.ball_rects):
-            agent_ball_dx, agent_ball_dy, norm_dx_ball, norm_dy_ball = get_direction_and_distance(
+            agent_ball_dx, agent_ball_dy, cate_dx_ball, cate_dy_ball = get_direction_and_distance(
                 self.agent_rect.centerx, self.agent_rect.centery,
                 ball.centerx, ball.centery,
                 norm_width, norm_height, self.agent_size
@@ -130,12 +150,22 @@ class DodgeGameEnv(gym.Env):
             velocity_y /= 5
 
             # Tüm bilgileri ekleyelim
-            balls_data.append([agent_ball_dx, agent_ball_dy, norm_dx_ball, norm_dy_ball, velocity_x, velocity_y])
-
+            balls_data.append([agent_ball_dx, agent_ball_dy, cate_dx_ball, cate_dy_ball, velocity_x, velocity_y])
 
         # Gözlem vektörü oluşturma
-        balls_data = np.array(balls_data).flatten()
-        state = np.concatenate([[agent_target_dx, agent_target_dy, norm_dx, norm_dy], balls_data])
+        flattened_balls_data = []
+        for item in balls_data:
+            flattened_balls_data.append([
+                item[0],  # direction_x
+                item[1],  # direction_y
+                *item[2],  # Açılmış distance_encoding_x
+                *item[3],  # Açılmış distance_encoding_y
+                item[4],  # velocity_x
+                item[5]   # velocity_y
+            ])
+        balls_data = np.array(flattened_balls_data).flatten()
+        state = np.concatenate([[agent_target_dx, agent_target_dy, *norm_dx, *norm_dy], balls_data])
+
         return state
 
     def step(self, action):
@@ -205,10 +235,57 @@ class DodgeGameEnv(gym.Env):
     def close(self):
         pygame.quit()
 
+    def save_state(self, name:str = "state"):
+        if not os.path.exists("states"):
+            os.makedirs("states")
+        info = {
+            "player_coordinates": (self.agent_rect.left, self.agent_rect.top),
+            "target_coordinates": (self.target_rect.left, self.target_rect.top),
+            "width": self.width,
+            "height": self.height,
+            "balls": [
+                (ball.left, ball.top, self.ball_directions[idx][0], self.ball_directions[idx][1])
+                for idx, ball in enumerate(self.ball_rects)
+            ],
+        }
+
+        file_path = os.path.join("states", f"{name}.pkl")
+        with open(file_path, "wb") as dosya:
+            pickle.dump(info, dosya)
+
+        return info
+    
+    def _set_state(self, state=None):
+        """Dosya yolunu veya doğrudan state dictionary'sini alarak oyun durumunu yükler."""
+        if isinstance(state, str):  # Eğer state bir dosya yoluysa
+            file_path = os.path.join("states", f"{state}.pkl")
+            if not os.path.exists(file_path):
+                raise FileNotFoundError(f"{file_path} file cannot be found.")
+            with open(file_path, "rb") as file:
+                state = pickle.load(file)
+        elif not isinstance(state, dict):
+            raise ValueError("Invalid state input: Expected file path or dictionary.")
+
+        # Yüklenen state’i uygula
+        self.agent_rect.left, self.agent_rect.top = state["player_coordinates"]
+        self.target_rect.left, self.target_rect.top = state["target_coordinates"]
+        self.width = state["width"]
+        self.height = state["height"]
+
+        self.ball_rects = []
+        self.ball_directions = []
+        for x, y, dx, dy in state["balls"]:
+            self.ball_rects.append(pygame.Rect(x, y, 20, 20))  # Top boyutunu uygun şekilde belirle
+            self.ball_directions.append((dx, dy))
+
+        return state
+
+
 register(
     id="DodgeGame-v0",
     entry_point=__name__ + ":DodgeGameEnv",
 )
+
 """
 if __name__ == "__main__":
     env = DodgeGameEnv(number_of_balls=0, width=500, height=500)
@@ -281,3 +358,6 @@ if __name__ == "__main__":
     env = DodgeGameEnv()
     obs, _ = env.reset()
     print(obs.shape,"\n",obs,"\n",env.target_rect,env.agent_rect)
+    env.save_state("deneme1")
+    env.reset()
+    env._set_state("deneme1")
