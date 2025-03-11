@@ -14,7 +14,7 @@ import os
 # TODO get_obs method is not good. It gives not exact information. Fix it
 
 class DodgeGameEnv(gym.Env):
-    def __init__(self, width=500, height=500, number_of_balls=0):
+    def __init__(self, width=500, height=500, number_of_balls=1):
         super().__init__()
         
         self.width = width
@@ -126,59 +126,43 @@ class DodgeGameEnv(gym.Env):
         return np.array([agent_target_dx,agent_target_dy,distancex,distancey])
 
     def _get_obs(self):
-        agent_rect = [self.agent_rect.left/self.width,
-                      self.agent_rect.right/self.width,
-                      self.agent_rect.top/self.height,
-                      self.agent_rect.bottom/self.height]
-        target_rect = [self.target_rect.left/self.width,
-                      self.target_rect.right/self.width,
-                      self.target_rect.top/self.height,
-                      self.target_rect.bottom/self.height]
+        def get_distance_and_direction(rect1, rect2):
+            """
+            rect1: Reference rectangle (agent)
+            rect2: Target rectangle (target or ball)
+            Returns:
+            - shortest x distance, shortest y distance
+            - relative direction in x, relative direction in y
+            """
+            distance_x = max(0, (rect2.left - rect1.right) / self.width) if rect1.centerx < rect2.centerx else max(0, (rect1.left - rect2.right) / self.width)
+            direction_x = 1 if rect1.centerx < rect2.centerx else -1 
+            if distance_x == 0:
+                direction_x = 0
+            distance_y = max(0, (rect2.top - rect1.bottom) / self.height) if rect1.top < rect2.top else max(0, (rect1.top - rect2.bottom) / self.height)
+            direction_y = -1 if rect1.top < rect2.top else 1 
+            if distance_y == 0:
+                direction_y = 0
+            return [distance_x, distance_y], [direction_x, direction_y]
         
-        # Distance between nearest points
-        # distance in x axis
-        distancex = 0
-        directionx = 0
-        if self.agent_rect.centerx < self.target_rect.centerx: # agent is left of the target
-            distancex = max(0,(self.target_rect.left - self.agent_rect.right) / self.width)
-            directionx = 1 if distancex != 0 else 0
-        else:
-            distancex = max(0,(self.agent_rect.left - self.target_rect.right) / self.width)
-            directionx = -1 if distancex != 0 else 0
         
-        distancey = 0
-        directiony = 0
-        if self.agent_rect.top < self.target_rect.top: # agent is up of the target
-            distancey = max(0,(self.target_rect.top - self.agent_rect.bottom) / self.height)
-            directiony = -1 if distancey != 0 else 0
-        else:
-            distancey = max(0,(self.agent_rect.top - self.target_rect.bottom) / self.height)
-            directiony = 1 if distancey != 0 else 0
-
-        min_distances = [distancex,distancey]
-        directions = [directionx,directiony]
-        # To store ball information
+        # Compute target features
+        target_distances, target_directions = get_distance_and_direction(self.agent_rect, self.target_rect)
+        
+         # Compute ball features
         ball_features = []
         for i, ball in enumerate(self.ball_rects):
-            ball_rect = [ball.left/self.width,
-                         ball.right/self.width,
-                         ball.top/self.height,
-                         ball.bottom/self.height]
-
-            # ball directions
-            ball_vel_direction = np.array([
+            ball_distances, ball_directions = get_distance_and_direction(self.agent_rect, ball)
+            ball_velocity_direction = [
                 self.ball_directions[i][0] / self.ball_speed,  # -1 or 1
                 self.ball_directions[i][1] / self.ball_speed   # -1 or 1
-            ])
-
+            ]
             
-            ball_features.extend(ball_rect)
-            ball_features.extend(ball_vel_direction)
-
-        # Final observation (2 + 6N length)
-        # final_observation = np.concatenate([agent_rect,target_rect,min_distances,directions, ball_features])
-        final_observation = np.concatenate([min_distances,directions, ball_features])
-
+            ball_features.extend(ball_distances)
+            ball_features.extend(ball_directions)
+            ball_features.extend(ball_velocity_direction)
+        
+         # Final observation
+        final_observation = np.concatenate([target_distances, target_directions, ball_features])
         return np.copy(final_observation.astype(np.float32))
 
     def step(self, action):
@@ -341,9 +325,9 @@ class DodgeGameEnv(gym.Env):
             return True
         
         # Kenardan temas durumlarını kontrol et
-        if (rect1.right == rect2.left or rect1.left == rect2.right) and (rect1.top < rect2.bottom and rect1.bottom > rect2.top):
+        if (rect1.right == rect2.left or rect1.left == rect2.right) and (rect1.top <= rect2.bottom and rect1.bottom >= rect2.top):
             return True
-        if (rect1.bottom == rect2.top or rect1.top == rect2.bottom) and (rect1.left < rect2.right and rect1.right > rect2.left):
+        if (rect1.bottom == rect2.top or rect1.top == rect2.bottom) and (rect1.left <= rect2.right and rect1.right >= rect2.left):
             return True
 
         return False
