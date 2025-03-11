@@ -24,13 +24,17 @@ import os
 
 # TODO Visualize the result of analyzing replay buffer ✅
 
+# TODO Create a second replay buffer to store terminated states. And in all step training,
+# there should be 20 states from second replay buffer
+
 # TODO Deploy the project using a cloud service when its done.
 
 
 class DQN:
     def __init__(self, env_name, train_frequency: int = 4, n_env: int = 4, gamma=0.99, 
                  batch_size=32,epsilon_decay:float = .995, min_epsilon:float = .1,
-                 update_target_frequency: int = 15, maxlen : int = 1_000_000) -> None:
+                 update_target_frequency: int = 15, maxlen : int = 1_000_000,
+                 maxlen_lose : int = 5_000, maxlen_win : int = 5000) -> None:
         self.env_name = env_name  
         self.n_env = n_env  
         self.gamma = gamma  
@@ -52,25 +56,32 @@ class DQN:
         self._update_target_model(tau=1)  # İlk başta hedef ağı güncelle
 
         self.maxlen = maxlen
+        self.maxlen_loose = maxlen_lose
+        self.maxlen_win = maxlen_win
         self.replay_buffer = deque(maxlen=self.maxlen)  # Deneyim havuzu
+        self.win_replay_buffer = deque(maxlen=self.maxlen_win)
+        self.lose_replay_buffer = deque(maxlen=self.maxlen_loose)
 
         self.max_ep_reward = np.inf
 
     def _get_model(self):
         """DQN Modeli"""
-        """model = Sequential([
+        model = Sequential([
             Input(shape=(self.input_shape,)),  
             Dense(32, activation="relu"), 
             Dense(32, activation="relu"), 
             Dense(self.output_shape, activation="linear")  
-        ])"""
+        ])
+        """
         model = Sequential([
             Input(shape=(self.input_shape,)),  
+            Dense(128, activation="relu"),  
             Dense(64, activation="relu"),  
             Dense(32, activation="relu"),  
             Dense(self.output_shape, activation="linear")  
         ])
-        model.compile(optimizer=tf.keras.optimizers.legacy.Adam(learning_rate=0.001),
+        """
+        model.compile(optimizer=tf.keras.optimizers.legacy.Adam(learning_rate=0.01),
                       loss="mse", metrics=["accuracy"])
         return model
 
@@ -120,10 +131,14 @@ class DQN:
                         dones[idx] = True
                         if reward >= 0:
                             terminated_game["winning_game"] += 1
+                            self.win_replay_buffer.append((np.copy(obss[idx]), actions[idx], reward, np.copy(next_obs), terminated))
+
                             # for _ in range(700):
                                 # self.replay_buffer.append((np.copy(obss[idx]), actions[idx], reward, np.copy(next_obs), terminated))
                         if reward <= 0:
                             terminated_game["loosing_game"] += 1 
+                            self.lose_replay_buffer.append((np.copy(obss[idx]), actions[idx], reward, np.copy(next_obs), terminated))
+
                             # for _ in range(30):
                                 #  self.replay_buffer.append((np.copy(obss[idx]), actions[idx], reward, np.copy(next_obs), terminated))
 
@@ -158,15 +173,19 @@ class DQN:
             #tf.keras.backend.set_value(self.main_model.optimizer.lr, 0.003)  # Varsayılan öğrenme oranı
         """
         # print("TRAİN EDİLECEK")
-        minibatch = [self.replay_buffer[np.random.randint(0, len(self.replay_buffer))] for _ in range(self.batch_size)]
+        minibatch = [self.replay_buffer[np.random.randint(0, len(self.replay_buffer))] for _ in range(self.batch_size - 10)]
+        minibatch += [self.win_replay_buffer[np.random.randint(0, len(self.win_replay_buffer))] for _ in range(3)]
+        minibatch += [self.lose_replay_buffer[np.random.randint(0, len(self.lose_replay_buffer))] for _ in range(7)]
+
         states, actions, rewards, next_states, dones = zip(*minibatch)
+
 
         counter_reward = 0
         counter_reward2 = 0
         for k in rewards:
-            if k == 5:
+            if k == 2:
                 counter_reward += 1
-            if k == -5:
+            if k == -6:
                 counter_reward2 += 1
         print(f"Bu stepte minibatchte kazanılan oyun durumu sayısı:{counter_reward}\
               Bu stepte minibatchte kaybedilen oyun durumu sayısı:{counter_reward2}")
@@ -455,10 +474,10 @@ class DQN:
 
     def analyze_replay_buffer(self):
         rewards = np.fromiter((r for _,_,r,_,_ in self.replay_buffer),dtype=np.float32)
-        count_of_winning_states = np.count_nonzero(rewards == 5)
-        count_of_closer_states = np.count_nonzero(rewards == -.1)
-        count_of_farer_states = np.count_nonzero(rewards == -1.)
-        count_of_collision_states = np.count_nonzero(rewards == -5)
+        count_of_winning_states = np.count_nonzero(rewards == 2)
+        count_of_closer_states = np.count_nonzero(rewards == .3)
+        count_of_farer_states = np.count_nonzero(rewards == -.5)
+        count_of_collision_states = np.count_nonzero(rewards == -6)
         return {
             "winning_state":count_of_winning_states,
             "closer_state":count_of_closer_states,
@@ -472,10 +491,7 @@ if __name__ == "__main__":
     import time 
     env_name = "DodgeGame-v0"  # Kendi ortamının adını buraya gir
     agent = DQN(env_name,n_env=100,train_frequency=1,maxlen=500_000,update_target_frequency=5,
-                batch_size=128,gamma=1, epsilon_decay=.975,min_epsilon=.1)
-    agent.load_model("deneme_son2.keras")
-    agent.target_model.set_weights(agent.main_model.get_weights())
-    agent.epsilon = 0.1
+                batch_size=128,gamma=.95, epsilon_decay=.975,min_epsilon=.1)
     st = time.time()
     agent.learn(total_steps=100,plot=True,n_step=100)
     print(f"Training time: {time.time()-st}")
