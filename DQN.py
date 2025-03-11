@@ -49,7 +49,7 @@ class DQN:
 
         self.main_model = self._get_model()  
         self.target_model = self._get_model()  
-        self._update_target_model()  # İlk başta hedef ağı güncelle
+        self._update_target_model(tau=1)  # İlk başta hedef ağı güncelle
 
         self.maxlen = maxlen
         self.replay_buffer = deque(maxlen=self.maxlen)  # Deneyim havuzu
@@ -58,23 +58,30 @@ class DQN:
 
     def _get_model(self):
         """DQN Modeli"""
-        model = Sequential([
+        """model = Sequential([
             Input(shape=(self.input_shape,)),  
             Dense(32, activation="relu"), 
             Dense(32, activation="relu"), 
+            Dense(self.output_shape, activation="linear")  
+        ])"""
+        model = Sequential([
+            Input(shape=(self.input_shape,)),  
+            Dense(64, activation="relu"),  
+            Dense(32, activation="relu"),  
             Dense(self.output_shape, activation="linear")  
         ])
         model.compile(optimizer=tf.keras.optimizers.legacy.Adam(learning_rate=0.001),
                       loss="mse", metrics=["accuracy"])
         return model
 
-    def _update_target_model(self, tau=0.005):
+    def _update_target_model(self, tau=1):
       """Hedef ağı yumuşak güncelleme ile günceller."""
       target_weights = self.target_model.get_weights()
       main_weights = self.main_model.get_weights()
       for i in range(len(target_weights)):
           target_weights[i] = tau * main_weights[i] + (1 - tau) * target_weights[i]
       self.target_model.set_weights(target_weights)
+     # self.target_model.set_weights(self.main_model.get_weights())
 
     def make_env(self):
         return gym.make(self.env_name)
@@ -148,15 +155,21 @@ class DQN:
             tf.keras.backend.set_value(self.main_model.optimizer.lr, 0.001) 
         else:
             tf.keras.backend.set_value(self.main_model.optimizer.lr, 0.01)  # Varsayılan öğrenme oranı
+            #tf.keras.backend.set_value(self.main_model.optimizer.lr, 0.003)  # Varsayılan öğrenme oranı
         
         # print("TRAİN EDİLECEK")
         minibatch = [self.replay_buffer[np.random.randint(0, len(self.replay_buffer))] for _ in range(self.batch_size)]
         states, actions, rewards, next_states, dones = zip(*minibatch)
+
         counter_reward = 0
+        counter_reward2 = 0
         for k in rewards:
             if k == 5:
                 counter_reward += 1
-        print(f"Bu stepte minibatchte kazanılan oyun durumu sayısı:{counter_reward}")
+            if k == -5:
+                counter_reward2 += 1
+        print(f"Bu stepte minibatchte kazanılan oyun durumu sayısı:{counter_reward}\
+              Bu stepte minibatchte kaybedilen oyun durumu sayısı:{counter_reward2}")
 
         # print(f"Minibatch'ten ilk 1 experience\n{minibatch[:1]}")
         states = np.array(states)
@@ -168,17 +181,24 @@ class DQN:
         # print(f"Minibatch için Q değerleri\n{q_values[:1]}")
         # print(f"Minibatch için Next_Q değerleri\n{next_q_values[:1]}")
         # Hedef Q-Değerleri
+        # terminals = []
         for i in range(self.batch_size):
             target_q = rewards[i]
             if not dones[i]:
                 target_q += self.gamma * np.max(next_q_values[i])  # Bellman eşitliği
 
+            """if dones[i]:
+                print(f"terminal değer.Action:{actions[i]} önceki q değerleri:{q_values[i]}")
+                terminals.append(i)"""
 
             q_values[i][actions[i]] = target_q  # Güncellenmiş hedef Q
+            """if dones[i]:
+                print(f"terminal değer. label q değerleri:{q_values[i]}",end="\n"*6)"""
         # Modeli eğit
         
         # print(f"Minibatch için label değerleri\n{q_values[:1]}")
         history = self.main_model.fit(states, q_values, epochs=1, verbose=1, batch_size=self.batch_size)
+        # print(f"eğitim sonrası terminal q tahminleri: {self.main_model.predict(states)[terminals]}")
         # print(f"Eğitim sonrası q değer tahminleri \n{self.main_model.predict(np.array(states[:1]).reshape(1,2))}")
         return history.history['loss'][0], history.history["accuracy"][0]
 
@@ -230,6 +250,7 @@ class DQN:
             total_frame += adding_total_step
             self.epsilon = max(self.min_epsilon, self.epsilon * self.epsilon_decay)
             print(f"""Güncel step:{step}\nAverage episode length:{avg_ep_length}\nAverage reward:{avg_ep_reward}\nmax episode length:{max_ep_len}\tmin episode length:{min_ep_len}\nmax episode reward:{max_ep_reward}\tmin episode reward{min_ep_reward}\ntotal_frame:{total_frame}\nfps:{round(adding_total_step/(time.time()-st1))}\nepsilon:{self.epsilon}\n{terminated_game}\n Replay buffer results:{replay_buffer_analysis}""",end="\n"*4)
+            self.save_model("deneme_son2.keras")
             if step % self.train_frequency == 0:
                 loss, accuracy = self.train(step)
                 if loss is not None:
@@ -435,8 +456,8 @@ class DQN:
     def analyze_replay_buffer(self):
         rewards = np.fromiter((r for _,_,r,_,_ in self.replay_buffer),dtype=np.float32)
         count_of_winning_states = np.count_nonzero(rewards == 5)
-        count_of_closer_states = np.count_nonzero(rewards == .4)
-        count_of_farer_states = np.count_nonzero(rewards == -.7)
+        count_of_closer_states = np.count_nonzero(rewards == 0.3)
+        count_of_farer_states = np.count_nonzero(rewards == -1.)
         count_of_collision_states = np.count_nonzero(rewards == -5)
         return {
             "winning_state":count_of_winning_states,
@@ -450,12 +471,13 @@ class DQN:
 if __name__ == "__main__":
     import time 
     env_name = "DodgeGame-v0"  # Kendi ortamının adını buraya gir
-    agent = DQN(env_name,n_env=100,train_frequency=1,maxlen=500_000,update_target_frequency=3,
-                batch_size=128,gamma=.99, epsilon_decay=.955,min_epsilon=.007)
-    """agent.load_model("deneme_best2.keras")
-    agent.epsilon = 0.1"""
+    agent = DQN(env_name,n_env=100,train_frequency=1,maxlen=500_000,update_target_frequency=5,
+                batch_size=128,gamma=1, epsilon_decay=.975,min_epsilon=.2)
+    """agent.load_model("deneme_son2.keras")
+    agent.target_model.set_weights(agent.main_model.get_weights())
+    agent.epsilon = 0.0001"""
     st = time.time()
-    agent.learn(total_steps=600,plot=True,n_step=90)
+    agent.learn(total_steps=100,plot=True,n_step=90)
     print(f"Training time: {time.time()-st}")
     agent.save_model("deneme_son2.keras")
 
