@@ -14,7 +14,7 @@ import os
 # TODO get_obs method is not good. It gives not exact information. Fix it
 
 class DodgeGameEnv(gym.Env):
-    def __init__(self, width=500, height=500, number_of_balls=1):
+    def __init__(self, width=500, height=500, number_of_balls=3):
         super().__init__()
         
         self.width = width
@@ -26,10 +26,10 @@ class DodgeGameEnv(gym.Env):
         self.ball_speed = 5
 
         self.rewards = {
-            "collision": -5,
-            "closer": -0.1,
-            "farer":-1.,
-            "achived":5
+            "collision": -6,
+            "closer": .3,
+            "farer":-.5,
+            "achived":2
         }
         
         # Gymnasium action & observation spaces
@@ -338,9 +338,9 @@ register(
     entry_point=__name__ + ":DodgeGameEnv",
 )
 
-"""
-if __name__ == "__main__":
-    env = DodgeGameEnv(number_of_balls=0, width=500, height=500)
+
+"""if __name__ == "__main__":
+    env = DodgeGameEnv(number_of_balls=1, width=500, height=500)
     obs, _ = env.reset()
     done = False
     over = False
@@ -360,9 +360,10 @@ if __name__ == "__main__":
                 elif event.key == pygame.K_d:
                     action = 1  # Sağ
                 
+                print("*"*30)
                 print(f"hamle öncesi observation: {env._get_obs()}")
                 obs, reward, done, _, _ = env.step(action)
-                print(f"hamle sonrası observation:{obs}")
+                print(f"hamle sonrası observation:{obs},reward:{reward},done:{done}",end="\n"*3)
                 env.render()
                 if done:
                     obs, _ = env.reset()
@@ -370,8 +371,8 @@ if __name__ == "__main__":
                     
     
     env.close()
-
 """
+
 
 
 """if __name__ == "__main__":
