@@ -149,14 +149,14 @@ class DQN:
             return
         
         # Öğrenme oranını güncelle
-        if 250 <= step:
+        """if 250 <= step:
             tf.keras.backend.set_value(self.main_model.optimizer.lr, 0.003)  # Yeni öğrenme oranı
         elif 1000 <= step:
             tf.keras.backend.set_value(self.main_model.optimizer.lr, 0.001) 
         else:
-            tf.keras.backend.set_value(self.main_model.optimizer.lr, 0.01)  # Varsayılan öğrenme oranı
+            tf.keras.backend.set_value(self.main_model.optimizer.lr, 0.001)  # Varsayılan öğrenme oranı
             #tf.keras.backend.set_value(self.main_model.optimizer.lr, 0.003)  # Varsayılan öğrenme oranı
-        
+        """
         # print("TRAİN EDİLECEK")
         minibatch = [self.replay_buffer[np.random.randint(0, len(self.replay_buffer))] for _ in range(self.batch_size)]
         states, actions, rewards, next_states, dones = zip(*minibatch)
@@ -456,7 +456,7 @@ class DQN:
     def analyze_replay_buffer(self):
         rewards = np.fromiter((r for _,_,r,_,_ in self.replay_buffer),dtype=np.float32)
         count_of_winning_states = np.count_nonzero(rewards == 5)
-        count_of_closer_states = np.count_nonzero(rewards == 0.3)
+        count_of_closer_states = np.count_nonzero(rewards == -.1)
         count_of_farer_states = np.count_nonzero(rewards == -1.)
         count_of_collision_states = np.count_nonzero(rewards == -5)
         return {
@@ -472,12 +472,12 @@ if __name__ == "__main__":
     import time 
     env_name = "DodgeGame-v0"  # Kendi ortamının adını buraya gir
     agent = DQN(env_name,n_env=100,train_frequency=1,maxlen=500_000,update_target_frequency=5,
-                batch_size=128,gamma=1, epsilon_decay=.975,min_epsilon=.2)
-    """agent.load_model("deneme_son2.keras")
+                batch_size=128,gamma=1, epsilon_decay=.975,min_epsilon=.1)
+    agent.load_model("deneme_son2.keras")
     agent.target_model.set_weights(agent.main_model.get_weights())
-    agent.epsilon = 0.0001"""
+    agent.epsilon = 0.1
     st = time.time()
-    agent.learn(total_steps=100,plot=True,n_step=90)
+    agent.learn(total_steps=100,plot=True,n_step=100)
     print(f"Training time: {time.time()-st}")
     agent.save_model("deneme_son2.keras")
 
