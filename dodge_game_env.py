@@ -11,8 +11,10 @@ import os
 # TODO make a function that save the entire env state and make another function (_set state) that
 # load the saved state ✅
 
+# TODO get_obs method is not good. It gives not exact information. Fix it
+
 class DodgeGameEnv(gym.Env):
-    def __init__(self, width=500, height=500, number_of_balls=13):
+    def __init__(self, width=500, height=500, number_of_balls=0):
         super().__init__()
         
         self.width = width
@@ -20,30 +22,34 @@ class DodgeGameEnv(gym.Env):
         self.number_of_balls = number_of_balls
         self.agent_size = 20  # Kare ajanın boyutu
         self.ball_size = 20  # Kare topların boyutu
+        self.agent_speed = 10
+        self.ball_speed = 5
 
         self.rewards = {
             "collision": -5,
-            "closer": .4,
-            "farer":-.7,
+            "closer": -0.1,
+            "farer":-1.,
             "achived":5
         }
         
         # Gymnasium action & observation spaces
         self.action_space = Discrete(5)  # 4 yönlü hareket (Up, Down, Left, Right)
-        self.observation_space = Box(0, 1, shape=(334,), dtype=np.float32)
-        
+        # self.observation_space = Box(0, 1, shape=(334,), dtype=np.float32)
+        # self.observation_space = Box(0, 1, shape=(4 + self.number_of_balls * 6,), dtype=np.float32)
+        self.observation_space = Box(0, 1, shape=(4+ 6*self.number_of_balls,), dtype=np.float32)
         
         # Hareket yönleri
         self._action_to_direction = {
-            0: np.array([0, -10]),  # Sol (Left)
-            1: np.array([0, 10]),   # Sağ (Right)
-            2: np.array([-10, 0]),  # Yukarı (Up)
-            3: np.array([10, 0]),   # Aşağı (Down)
+            0: np.array([0, -self.agent_speed]),  # Sol (Left)
+            1: np.array([0, self.agent_speed]),   # Sağ (Right)
+            2: np.array([-self.agent_speed, 0]),  # Yukarı (Up)
+            3: np.array([self.agent_speed, 0]),   # Aşağı (Down)
             4: np.array([0,0])      # Nothing
         }
         
         # Pygame başlat
         pygame.init()
+        self.reset()
         self.screen = pygame.display.set_mode((self.width, self.height))
         self.clock = pygame.time.Clock()
 
@@ -65,7 +71,7 @@ class DodgeGameEnv(gym.Env):
                 self.np_random.integers(0, self.height - self.agent_size),
                 self.agent_size, self.agent_size
             )
-            if not self.target_rect.colliderect(self.agent_rect):
+            if not self._rect_collision_or_touch(self.target_rect,self.agent_rect):
                 break
         
         # Topların başlangıç konumları ve hareket yönleri
@@ -77,16 +83,16 @@ class DodgeGameEnv(gym.Env):
                     self.np_random.integers(0, self.height - self.ball_size),
                     self.ball_size, self.ball_size
                 )
-                if not ball_rect.colliderect(self.agent_rect):
+                if not self._rect_collision_or_touch(ball_rect,self.agent_rect):
                     self.ball_rects.append(ball_rect)
                     break
         
-        self.ball_directions = self.np_random.choice([-1, 1], size=(self.number_of_balls, 2)) * 5  # -5 veya 5 hız
+        self.ball_directions = self.np_random.choice([-1, 1], size=(self.number_of_balls, 2)) * self.ball_speed 
         
         return self._get_obs(), {}
 
-    def _get_obs(self):
-        def get_direction_and_distance(x1, y1, x2, y2, norm_factor_x, norm_factor_y, agent_size):
+    def _get_obs2(self):  # Categorical
+        def get_direction_and_distance(x1, y1, x2, y2,agent_size):
             """Hedef veya top için yön (-1, 0, 1) ve normalize mesafe hesaplar."""
             dx = x2 - x1
             dy = y2 - y1
@@ -100,82 +106,126 @@ class DodgeGameEnv(gym.Env):
                 direction_x = 0
             if abs(dy) < agent_size:
                 direction_y = 0
-
-            # Normalize mesafe hesaplama
-            norm_dx = abs(dx) // 10  # number of step
-            norm_dy = abs(dy) // 10  # number of step
-
-            distance_encoding_x = [0]*10
-            distance_encoding_y = [0]*10
-
-            if 0<norm_dx < 9:
-                distance_encoding_x[norm_dx] = 1
-            elif norm_dx == 0:
-                distance_encoding_x = [0]*10
-            else:
-                distance_encoding_x[9] = 1  # The last index
             
-            if 0<norm_dy < 9:
-                distance_encoding_y[norm_dy] = 1
-            elif norm_dy == 0:
-                distance_encoding_y = [0]*10
-            else:
-                distance_encoding_y[9] = 1  # The last index
+            distancex = dx / self.width
+            distancey = dy / self.height
             
 
-            return direction_x, direction_y, distance_encoding_x, distance_encoding_y
+            return direction_x, direction_y, distancex, distancey
 
 
-        norm_width = self.width // 10
-        norm_height = self.height // 10
 
         # Ajan ve hedef arasındaki yön ve mesafe
-        agent_target_dx, agent_target_dy, norm_dx, norm_dy = get_direction_and_distance(
+        agent_target_dx, agent_target_dy, distancex,distancey = get_direction_and_distance(
             self.agent_rect.centerx, self.agent_rect.centery,
-            self.target_rect.centerx, self.target_rect.centery,
-            norm_width, norm_height, self.agent_size
+            self.target_rect.centerx, self.target_rect.centery,self.agent_size
         )
 
-        # Top bilgileri
-        balls_data = []
-        for i,ball in enumerate(self.ball_rects):
-            agent_ball_dx, agent_ball_dy, cate_dx_ball, cate_dy_ball = get_direction_and_distance(
-                self.agent_rect.centerx, self.agent_rect.centery,
-                ball.centerx, ball.centery,
-                norm_width, norm_height, self.agent_size
-            )
-            # Topun hız yönü (velocity_x, velocity_y)
-            velocity_x, velocity_y = self.ball_directions[i]  # Topların hız vektörleri
-            velocity_x /= 5
-            velocity_y /= 5
 
-            # Tüm bilgileri ekleyelim
-            balls_data.append([agent_ball_dx, agent_ball_dy, cate_dx_ball, cate_dy_ball, velocity_x, velocity_y])
 
-        # Gözlem vektörü oluşturma
-        flattened_balls_data = []
-        for item in balls_data:
-            flattened_balls_data.append([
-                item[0],  # direction_x
-                item[1],  # direction_y
-                *item[2],  # Açılmış distance_encoding_x
-                *item[3],  # Açılmış distance_encoding_y
-                item[4],  # velocity_x
-                item[5]   # velocity_y
+        return np.array([agent_target_dx,agent_target_dy,distancex,distancey])
+
+    def _get_obs(self):
+        agent_rect = [self.agent_rect.left/self.width,
+                      self.agent_rect.right/self.width,
+                      self.agent_rect.top/self.height,
+                      self.agent_rect.bottom/self.height]
+        target_rect = [self.target_rect.left/self.width,
+                      self.target_rect.right/self.width,
+                      self.target_rect.top/self.height,
+                      self.target_rect.bottom/self.height]
+        
+        # Distance between nearest points
+        # distance in x axis
+        distancex = 0
+        directionx = 0
+        if self.agent_rect.centerx < self.target_rect.centerx: # agent is left of the target
+            distancex = max(0,(self.target_rect.left - self.agent_rect.right) / self.width)
+            directionx = 1 if distancex != 0 else 0
+        else:
+            distancex = max(0,(self.agent_rect.left - self.target_rect.right) / self.width)
+            directionx = -1 if distancex != 0 else 0
+        
+        distancey = 0
+        directiony = 0
+        if self.agent_rect.top < self.target_rect.top: # agent is up of the target
+            distancey = max(0,(self.target_rect.top - self.agent_rect.bottom) / self.height)
+            directiony = -1 if distancey != 0 else 0
+        else:
+            distancey = max(0,(self.agent_rect.top - self.target_rect.bottom) / self.height)
+            directiony = 1 if distancey != 0 else 0
+
+        min_distances = [distancex,distancey]
+        directions = [directionx,directiony]
+        # To store ball information
+        ball_features = []
+        for i, ball in enumerate(self.ball_rects):
+            ball_rect = [ball.left/self.width,
+                         ball.right/self.width,
+                         ball.top/self.height,
+                         ball.bottom/self.height]
+
+            # ball directions
+            ball_vel_direction = np.array([
+                self.ball_directions[i][0] / self.ball_speed,  # -1 or 1
+                self.ball_directions[i][1] / self.ball_speed   # -1 or 1
             ])
-        balls_data = np.array(flattened_balls_data).flatten()
-        state = np.concatenate([[agent_target_dx, agent_target_dy, *norm_dx, *norm_dy], balls_data])
 
-        return state
+            
+            ball_features.extend(ball_rect)
+            ball_features.extend(ball_vel_direction)
+
+        # Final observation (2 + 6N length)
+        # final_observation = np.concatenate([agent_rect,target_rect,min_distances,directions, ball_features])
+        final_observation = np.concatenate([min_distances,directions, ball_features])
+
+        return np.copy(final_observation.astype(np.float32))
 
     def step(self, action):
-        first_distance = abs(self.target_rect.left - self.agent_rect.left) + abs(self.target_rect.top - self.agent_rect.top)
+        before_action_state = {
+            "player_coordinates": (self.agent_rect.left, self.agent_rect.top),
+            "target_coordinates": (self.target_rect.left, self.target_rect.top),
+            "width": self.width,
+            "height": self.height,
+            "balls": [
+                (ball.left, ball.top, self.ball_directions[idx][0], self.ball_directions[idx][1])
+                for idx, ball in enumerate(self.ball_rects)
+            ],
+        }
+
+
+        distancex = 0
+        if self.agent_rect.centerx < self.target_rect.centerx: # agent is left of the target
+            distancex = max(0,(self.target_rect.left - self.agent_rect.right) / self.width)
+        else:
+            distancex = max(0,(self.agent_rect.left - self.target_rect.right) / self.width)
+        
+        distancey = 0
+        if self.agent_rect.top < self.target_rect.top: # agent is up of the target
+            distancey = max(0,(self.target_rect.top - self.agent_rect.bottom) / self.height)
+        else:
+            distancey = max(0,(self.agent_rect.top - self.target_rect.bottom) / self.height)
+
+        first_distance = distancex + distancey
+
+
         # Ajanı hareket ettir
         movement = self._action_to_direction[int(action)]
         self.agent_rect.move_ip(movement[1], movement[0])  # (dx, dy)
 
-        second_distance = abs(self.target_rect.left - self.agent_rect.left) + abs(self.target_rect.top - self.agent_rect.top)
 
+        distancex = 0
+        if self.agent_rect.centerx < self.target_rect.centerx: # agent is left of the target
+            distancex = max(0,(self.target_rect.left - self.agent_rect.right) / self.width)
+        else:
+            distancex = max(0,(self.agent_rect.left - self.target_rect.right) / self.width)
+        
+        distancey = 0
+        if self.agent_rect.top < self.target_rect.top: # agent is up of the target
+            distancey = max(0,(self.target_rect.top - self.agent_rect.bottom) / self.height)
+        else:
+            distancey = max(0,(self.agent_rect.top - self.target_rect.bottom) / self.height)
+        second_distance = distancex + distancey
         # Duvar çarpışmasını engelle (ajan)
         self.agent_rect.clamp_ip(pygame.Rect(0, 0, self.width, self.height))
         
@@ -190,22 +240,23 @@ class DodgeGameEnv(gym.Env):
         
         terminated = False
         truncated = False  # Zaman sınırı varsa True yapılabilir
+        # print(f"first distance: {first_distance} second distance:{second_distance} difference:{second_distance-first_distance}")
         reward = self.rewards["closer"] if second_distance < first_distance else self.rewards["farer"]
 
-        if self.agent_rect.colliderect(self.target_rect):
+        if self._rect_collision_or_touch(self.agent_rect,self.target_rect):
             reward = self.rewards["achived"]
             # self._place_target()  
             terminated = True  
-            return self._get_obs(), reward, terminated, truncated, {}
+            return self._get_obs(), reward, terminated, truncated, {"before_action_state":before_action_state}
 
         for ball in self.ball_rects:
-            if self.agent_rect.colliderect(ball):
+            if self._rect_collision_or_touch(self.agent_rect,ball):
                 reward = self.rewards["collision"]
                 terminated = True
                 break
         
 
-        return self._get_obs(), reward, terminated, truncated, {}
+        return self._get_obs(), reward, terminated, truncated, {"before_action_state":before_action_state}
     
     def render(self):
         RED = (255,0,0)
@@ -235,19 +286,22 @@ class DodgeGameEnv(gym.Env):
     def close(self):
         pygame.quit()
 
-    def save_state(self, name:str = "state"):
+    def save_state(self, name:str = "state", state_ = None):
         if not os.path.exists("states"):
             os.makedirs("states")
-        info = {
-            "player_coordinates": (self.agent_rect.left, self.agent_rect.top),
-            "target_coordinates": (self.target_rect.left, self.target_rect.top),
-            "width": self.width,
-            "height": self.height,
-            "balls": [
-                (ball.left, ball.top, self.ball_directions[idx][0], self.ball_directions[idx][1])
-                for idx, ball in enumerate(self.ball_rects)
-            ],
-        }
+        if state_ == None:
+            info = {
+                "player_coordinates": (self.agent_rect.left, self.agent_rect.top),
+                "target_coordinates": (self.target_rect.left, self.target_rect.top),
+                "width": self.width,
+                "height": self.height,
+                "balls": [
+                    (ball.left, ball.top, self.ball_directions[idx][0], self.ball_directions[idx][1])
+                    for idx, ball in enumerate(self.ball_rects)
+                ],
+            }
+        else:
+            info = state_
 
         file_path = os.path.join("states", f"{name}.pkl")
         with open(file_path, "wb") as dosya:
@@ -279,6 +333,20 @@ class DodgeGameEnv(gym.Env):
             self.ball_directions.append((dx, dy))
 
         return state
+
+    def _rect_collision_or_touch(self,rect1, rect2):
+        # Pygame.recet.colliderect doesn't return True if rects intersect in boundary
+        # Normal çarpışmayı kontrol et
+        if rect1.colliderect(rect2):
+            return True
+        
+        # Kenardan temas durumlarını kontrol et
+        if (rect1.right == rect2.left or rect1.left == rect2.right) and (rect1.top < rect2.bottom and rect1.bottom > rect2.top):
+            return True
+        if (rect1.bottom == rect2.top or rect1.top == rect2.bottom) and (rect1.left < rect2.right and rect1.right > rect2.left):
+            return True
+
+        return False
 
 
 register(
@@ -355,9 +423,12 @@ if __name__ == "__main__":
 """
 
 if __name__ == "__main__":
-    env = DodgeGameEnv()
+    env = DodgeGameEnv(number_of_balls=0)
     obs, _ = env.reset()
-    print(obs.shape,"\n",obs,"\n",env.target_rect,env.agent_rect)
-    env.save_state("deneme1")
-    env.reset()
-    env._set_state("deneme1")
+    print("Without ball\nobs shape: ",obs.shape,"\nobs: ",obs,"\n")
+    env = DodgeGameEnv(number_of_balls=1)
+    obs, _ = env.reset()
+    print("With 1 ball\nobs shape: ",obs.shape,"\nobs: ",obs,"\n")
+    env = DodgeGameEnv(number_of_balls=2)
+    obs, _ = env.reset()
+    print("With 2 ball\nobs shape: ",obs.shape,"\nobs: ",obs,"\n")
