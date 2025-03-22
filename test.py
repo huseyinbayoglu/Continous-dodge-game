@@ -5,9 +5,7 @@ import time
 from stable_baselines3 import PPO, DQN, A2C
 from stable_baselines3.common.vec_env import DummyVecEnv, VecNormalize
 from stable_baselines3.common.evaluation import evaluate_policy
-"""
-Hi. Firstly, thanks for the help. I had some bug in get_obs method. I fixed it and the agent performed much better. But still cant play very well. My agent can go to target but cant learn to avoid balls. what should i do about it? if you have free time, can you help me?
-"""
+
 from env import GridWorldEnv
 
 def load_model(model_path, model_type="ppo", vec_normalize_path=None):
